@@ -1,0 +1,292 @@
+---
+title: "Homework #1: Supervised Learning"
+author: "Aubrey Winger"
+date: "Due: Wed Sept 07 | 11:45am"
+output: R6030::homework
+---
+
+# Required R packages and Directories
+
+::: {.solution}
+```{r packages, message=FALSE, warning=FALSE}
+data.dir = 'https://mdporter.github.io/DS6030/data/' # data directory
+library(R6030)     # functions for DS-6030
+library(tidyverse) # functions for data manipulation
+```
+:::
+
+# Problem 1: Evaluating a Regression Model
+
+## a. Create a set of functions to generate data from the following distributions:
+\begin{align*}
+X &\sim \mathcal{N}(0, 1) \\
+Y &= -1 + .5X + .2X^2 + \epsilon \\
+\epsilon &\sim \mathcal{N}(0,\, \sigma)
+\end{align*}
+
+
+::: {.solution}
+```{r}
+# X_func <- function(n){
+#   return(rnorm(n,0,1))
+# }
+# Y_func <- function(sigma,n,X){
+#   f <- function(X) -1 + 0.5*X + 0.2*(X**2)
+#   return(f(X)+rnorm(n,0,sigma))
+# }
+X_func <- function(n) rnorm(n)           # N[0,1]
+Y_func <- function(x, sd){               # generate Y|X from N{f(x),sd}
+  n = length(x)
+  f <- function(x) -1 + 0.5*x + 0.2*(x^2)   # true mean function
+  f(x) + rnorm(n, sd=sd)  
+}
+f <- function(x) -1 + 0.5*x + 0.2*(x**2)
+```
+:::
+
+
+## b. Simulate $n=100$ realizations from these distributions using $\sigma=3$. Produce a scatterplot and draw the true regression line $f(x) = E[Y \mid X=x]$.
+- Use `set.seed(611)` prior to generating the data.
+
+::: {.solution}
+```{r}
+set.seed(611)
+x <- X_func(100)
+y <- Y_func(x,sd=3)
+data_train = tibble(x,y)
+```
+
+```{r}
+ggplot(data_train,aes(x=x,y=y))+
+  geom_point() +
+  geom_function(fun=f)+
+  ggtitle("Data Distribution and True Fit Quadratic Model")
+```
+
+
+:::
+
+## c. Fit three polynomial regression models using least squares: linear, quadratic, and cubic. Produce another scatterplot, add the fitted lines and true population line $f(x)$  using different colors, and add a legend that maps the line color to a model.
+- Note: The true model is quadratic, but we are also fitting linear (less complex) and cubic (more complex) models.
+
+::: {.solution}
+```{r}
+linear <- lm(y~x, data=data_train)
+quad <- lm(y~poly(x,degree=2), data=data_train)
+cubic <- lm(y~poly(x,degree=3),data=data_train)
+```
+
+
+```{r}
+colors <- c("True Model" = "blue", "Linear Model" = "red", "Quadratic Model" = "orange", "Cubic Model"= "green")
+
+ggplot(data_train,aes(x=x,y=y))+
+  geom_point() +
+  geom_function(fun=f,aes(color="True Model")) +
+  geom_smooth(method="lm", formula=y~x,se=F,aes(color='Linear Model'))+
+  geom_smooth(method="lm",formula=y~poly(x,2),se=F,aes(color='Quadratic Model'))+
+  geom_smooth(method="lm",formula=y~poly(x,3),se=F,aes(color='Cubic Model'))+
+  labs(color="Legend")+
+  ggtitle("Comparing the Fit of Polynomial Regression Models on Training Data")
+```
+
+:::
+
+## d. Simulate a *test data* set of 10,000 observations from the same distributions. Use `set.seed(612)` prior to generating the test data.
+- Calculate the estimated mean squared error (MSE) for each model.
+- Are the results as expected?
+
+Although MSE should decrease with increasing polynomial degree, the linear model has the lowest MSE. The linear model had a MSE of 9.293776, the quadratic model has a MSE of 9.583155, and the cubic model has a MSE of 9.648192. This is likely because there is no clear pattern in the data.
+
+::: {.solution}
+```{r}
+set.seed(612)
+X_test <- X_func(10000)
+Y_test <- Y_func(X_test,sd=3)
+test_data = tibble(x=X_test, y=Y_test) 
+```
+
+```{r}
+linear_test <- predict(linear,test_data) 
+quad_test <- predict(quad,test_data)
+cubic_test <- predict(cubic,test_data)
+print(mean((test_data$y-linear_test)**2)) #should be like 9.2?
+print(mean((test_data$y-quad_test)**2))
+print(mean((test_data$y-cubic_test)**2))
+```
+:::
+
+## e. What is the best achievable MSE? That is, what is the MSE if the true $f(x)$ was used to evaluate the test set? How close does the best method come to achieving the optimum?
+
+The best achievable MSE is 8.972119. This is better than the other three models. Theoretically, the optimal MSE is sd^2, which would be 3^2=9. This is very close to the calculated best achievable MSE.
+
+::: {.solution}
+```{r}
+print(mean((test_data$y-f(X_test))^2)) #best achievable MSE
+print(mean((Y_func(X_test,0) - test_data$y)^2))
+```
+:::
+
+
+## f. The MSE scores obtained in part *d* came from one realization of training data. Here will we explore how much variation there is in the MSE scores by replicating the simulation many times.
+
+- Re-run parts b. and c. (i.e., generate training data and fit models) 100 times.
+- Calculate the MSE for all simulations.
+- Create kernel density or histogram plots of the resulting MSE values for each model.
+- Use `set.seed(613)` prior to running the simulation and do not set the seed in any other places.
+- Use the same test data from part d. (This question is only about the variability that comes from the training data).
+
+::: {.solution}
+```{r}
+set.seed(613)
+MSE_linear <- rep(0,100)
+MSE_quad <- rep(0,100)
+MSE_cubic <- rep(0,100)
+for(i in 1:100){
+  x <- X_func(100)
+  y <- Y_func(x,sd=3)
+  linear <- lm(y~x)
+  quad <- lm(y~poly(x,2))
+  cubic <- lm(y~poly(x,3))
+  linear_test <- predict(linear,test_data)
+  quad_test <- predict(quad,test_data)
+  cubic_test <- predict(cubic,test_data)
+  MSE_linear[i]<- mean((test_data$y-linear_test)^2)
+  MSE_quad[i]<- mean((test_data$y-quad_test)^2)
+  MSE_cubic[i]<- mean((test_data$y-cubic_test)^2)
+}
+MSE_all <- data.frame(MSE_linear,MSE_quad,MSE_cubic)
+```
+
+```{r}
+ggplot(MSE_all,aes(x=MSE_linear))+geom_histogram()+ggtitle("Distribution of MSE for Linear Models")
+```
+
+```{r}
+ggplot(MSE_all,aes(x=MSE_quad))+geom_histogram()+ggtitle("Distribution of MSE for Quadratic Models")
+```
+
+```{r}
+ggplot(MSE_all,aes(x=MSE_cubic))+geom_histogram()+ggtitle("Distribution of MSE for Cubic Models")
+```
+
+:::
+
+
+## g. Show a count of how many times each model was the best. That is, out of the 100 simulations, count how many times each model had the lowest MSE.
+The linear model had the best MSE 28 times, the quadratic model has the best MSE 65 times, and the cubic model had the best MSE 7 times.
+::: {.solution}
+```{r}
+count_linear <-0
+count_quad <-0
+count_cubic <-0
+for(row in 1:100){
+  if(min(MSE_all[row,])==MSE_all[row,1]){
+    count_linear <- count_linear +1
+  }
+  else if(min(MSE_all[row,])==MSE_all[row,2]){
+    count_quad <- count_quad +1
+    }else{
+      count_cubic <- count_cubic+1
+    }
+}
+print(count_linear)
+print(count_quad)
+print(count_cubic)
+```
+
+:::
+
+
+## h. Write a function that implements the simulation in part *f*. The function should have arguments for i) the size of the training data $n$, and ii) the standard deviation of the random error $\sigma$.  Use the same `set.seed(613)`. 
+
+::: {.solution}
+```{r}
+regression_sim <- function(n,sigma){
+  set.seed(613)
+  MSE_linear <- rep(0,100)
+  MSE_quad <- rep(0,100)
+  MSE_cubic <- rep(0,100)
+  for(i in 1:100){
+    x <- X_func(n)
+    y <- Y_func(x,sd=sigma)
+    linear <- lm(y~x)
+    quad <- lm(y~poly(x,2))
+    cubic <- lm(y~poly(x,3))
+    linear_test <- predict(linear,test_data)
+    quad_test <- predict(quad,test_data)
+    cubic_test <- predict(cubic,test_data)
+    MSE_linear[i]<- mean((test_data$y-linear_test)^2)
+    MSE_quad[i]<- mean((test_data$y-quad_test)^2)
+    MSE_cubic[i]<- mean((test_data$y-cubic_test)^2)
+  }
+  MSE_all <- data.frame(MSE_linear,MSE_quad,MSE_cubic)
+  return(MSE_all)
+}
+```
+
+:::
+
+## i. Use your function to repeat the simulation in part *f*, but use $\sigma=2$. Report the number of times each model was best (you do not need to produce any plots). 
+The linear model had the best MSE 14 times, the quadratic model had the best MSE 68 times, and the cubic model had the best MSE 18 times.
+::: {.solution}
+```{r}
+MSE_all2<-regression_sim(100,2)
+count_linear2 <-0
+count_quad2 <-0
+count_cubic2 <-0
+for(row in 1:100){
+  if(min(MSE_all2[row,])==MSE_all2[row,1]){
+    count_linear2 <- count_linear2 +1
+  }
+  else if(min(MSE_all2[row,])==MSE_all2[row,2]){
+    count_quad2 <- count_quad2 +1
+    }else{
+      count_cubic2 <- count_cubic2+1
+    }
+}
+print(count_linear2)
+print(count_quad2)
+print(count_cubic2)
+```
+
+:::
+
+
+## j. Repeat *i*, but now use $\sigma=4$ and $n=300$.
+For these adjusted parameters, the linear model had the best MSE 11 times, the quadratic model has the best MSE 78 times, and the cubic model had the best MSE 11 times.
+::: {.solution}
+```{r}
+MSE_all3<-regression_sim(300,4)
+count_linear3 <-0
+count_quad3 <-0
+count_cubic3 <-0
+for(row in 1:100){
+  if(min(MSE_all3[row,])==MSE_all3[row,1]){
+    count_linear3 <- count_linear3 +1
+  }
+  else if(min(MSE_all3[row,])==MSE_all3[row,2]){
+    count_quad3 <- count_quad3 +1
+    }else{
+      count_cubic3 <- count_cubic3+1
+    }
+}
+print(count_linear3)
+print(count_quad3)
+print(count_cubic3)
+```
+
+:::
+
+## k. Describe the effects $\sigma$ and $n$ has on selection of the best model? Why is the *true* model form (i.e., quadratic) not always the *best* model to use when prediction is the goal?
+
+::: {.solution}
+
+An increase in n increases the amount of training data used to fit the model, which would improve the MSE of the model. The more data there is, the better the model can estimate a fit. Therefore, when more training data was used with the model, the model with the lowest MSE 78 out of 100 times was the quadratic model, which is the true model for the data. The quadratic model was selected more times with 300 training data points than it was with 100 training data points. Larger values of standard deviation increase the MSE in a model because the generated data points have greater deviation from the distribution they were generated by. With an increased standard deviation the data appears more random and without a pattern, which makes it less likely the true model will be chosen. When the standard deviation was decreased from 3 to 2 in part i, the quadratic model was selected 3 more times. The quadratic model is not always the best model to use when prediction is the goal because a model with a higher polynomial degree can overfit the training data. If the model has higher variance and is not very generalized, its predictive power will not be as strong when applied to test data, resulting in a higher MSE.
+
+:::
+
+
+
+
+

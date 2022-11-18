@@ -1,0 +1,191 @@
+---
+title: "Homework #8: Tree Ensembles" 
+author: "Aubrey Winger"
+date: "Due: Wed Nov 2 | 11:45am"
+output: R6030::homework
+---
+
+**DS 6030 | Fall 2022 | University of Virginia**
+
+------------------------------------------------------------------------
+
+```{r config, echo=FALSE}
+source(system.file("config/hw_config.R", package="R6030")) # knitr settings
+options(dplyr.summarise.inform = FALSE)  # ignore dplyr message about grouping
+```
+
+::: {style="background-color:yellow; color:red; display: block; border-color: black; padding:1em"}
+
+This is an **independent assignment**. Do not discuss or work with classmates.
+
+:::
+
+# Required R packages and Directories
+
+::: {.solution}
+```{r packages, message=FALSE, warning=FALSE}
+data.dir = 'https://mdporter.github.io/DS6030/data/' # data directory
+library(R6030)     # functions for DS-6030
+library(tidyverse) # functions for data manipulation  
+library(randomForest)
+```
+:::
+
+# Problem 1: Tree Splitting for classification
+
+Consider the Gini index, classification error, and entropy impurity measures in a simple classification setting with two classes. 
+
+Create a single plot that displays each of these quantities as a function of $p_m$, the estimated probability of an observation in node $m$ being from class 1. The x-axis should display $p_m$, ranging from 0 to 1, and the y-axis should display the value of the Gini index, classification error, and entropy.
+
+::: {.solution}
+```{r}
+class1 <- seq(0,1,length.out=100)
+class2 <- 1-class1
+misclass <- rep(0,100)
+gini <- rep(0,100)
+cross_entropy <- rep(0,100)
+for(i in 1:100){
+  misclass[i] <- 1-max(c(class1[i],class2[i]))
+  gini[i] <- (class1[i]*(1-class1[i]))+(class2[i]*(1-class2[i]))
+  cross_entropy[i] <- (class1[i]*log(1/class1[i]))+(class2[i]*log(1/class2[i]))
+}
+ggplot()+
+  geom_line(aes(x=class1,y=misclass,color='Classification Error'))+
+  geom_line(aes(x=class1,y=gini,color='Gini Index'))+
+  geom_line(aes(x=class1,y=cross_entropy,color='Entropy Inpurity'))+
+  xlab("P(m)")+
+  ylab("Node Impurity Value")
+  
+```
+
+:::
+
+
+# Problem 2: Combining bootstrap estimates
+
+```{r, echo=FALSE}
+p_red = c(0.2, 0.25, 0.3, 0.4, 0.4, 0.45, 0.7, 0.85, 0.9, 0.9)
+```
+
+Suppose we produce ten bootstrapped samples from a data set containing red and green classes. We then apply a classification tree to each bootstrapped sample and, for a specific value of $X$, produce the following 10 estimates of $\Pr(\text{Class is Red} \mid X)$: $\{`r stringr::str_c(p_red, sep=", ")`\}$.
+
+## a. ISLR 8.2 describes the *majority vote* approach for making a hard classification from a set of bagged classifiers. What is the final classification for this example using majority voting?
+
+::: {.solution}
+Since 6 of the estimates of the probability that the sample is red are less than 0.5, by majority vote the class would be green. Green is the most commonly occurring prediction.
+:::
+
+## b. An alternative is to base the final classification on the average probability. What is the final classification for this example using average probability?
+
+::: {.solution}
+The average probability that the sample is red is 0.535. Therefore, the final classification for this example would be red.
+```{r}
+mean(c(0.2,0.25,0.3,0.4,0.4,0.45,0.7,0.85,0.9,0.9))
+```
+:::
+
+## c. Suppose the cost of mis-classifying a Red observation (as Green) is twice as costly as mis-classifying a Green observation (as Red). How would you modify both approaches to make better final classifications under these unequal costs? Report the final classifications. 
+
+::: {.solution}
+For both of these, I would apply cost complexity pruning/weakest link pruning to the classification trees to create smaller trees with fewer splits. The final classifications for majority voting would likely be red, since this is the less costly classification and the original classification trees produced 6 green estimates and 4 red estimates. Since the original majority vote was fairly close, with the added cost complexity pruning this method would pick red. Since the original average probability classification was red, I would expect this to continue to be red.
+:::
+
+
+# Problem 3: Random Forest Tuning
+
+Random forest has several tuning parameters that you will explore in this problem. We will use the `Boston` housing data from the `MASS` R package (See the ISLR Lab in section 8.3.3 for example code).
+
+- Note: remember that `MASS` can mask the `dplyr::select()` function.
+
+## a. List all of the random forest tuning parameters in the `randomForest::randomForest()` function. Note any tuning parameters that are specific to classification or regression problems. Indicate the tuning parameters you think will be most important to optimize? 
+
+::: {.solution}
+The tuning parameters are ntree (number of trees to grow), mtry (number of variables randomly sampled at each split), weights (used to grow each true), priors (specific to classification), cutoff (used for majority vote, specific to classification), strata (factor/variable used for stratified sampling), sampsize (size of sample to draw), nodesize (minimum size of terminal nodes), maxnodes (maximum number of terminal nodes), and nPerm (number of times the OOB data are permuted per tree, regression only). I think the most important tuning parameters to optimize are ntree, mtry, and nodesize. Mtry controls variety, and nodesize sets the minimum number of observations in the leaf nodes, which controls the complexity of the tree. ntree should be as large as possible, subject to computational and memory constraints.
+```{r}
+help('randomForest')
+```
+
+:::
+
+
+## b. Use a random forest model to predict `medv`, the median value of owner-occupied homes (in $1000s). Use the default parameters and report the 10-fold cross-validation MSE. 
+
+::: {.solution}
+The MSE is 10.41
+```{r}
+library(MASS)
+attach(Boston)
+```
+
+```{r}
+#- Get K-fold partition
+n = nrow(Boston) # number of training observations
+n.folds = 10 # number of folds for cross-validation
+set.seed(221) # set seed for reproducibility
+fold = sample(rep(1:n.folds, length=n)) # vector of fold labels
+# notice how this is different than: sample(1:K,n,replace=TRUE),
+# which won't necessarily give almost equal group sizes
+results = vector("list", n.folds)
+MSE = rep(0,10)
+#- Iterate over folds
+for(i in 1:n.folds){
+#-- Set training/val data
+  val = which(fold == i) # indices of holdout/validation data
+  train = which(fold != i) # indices of fitting/training data
+  n.val = length(val) # number of observations in validation
+#- fit and evaluate models
+  rf.boston <- randomForest(medv~.,data=Boston,subset=train) 
+  yhat.boston <- predict(rf.boston,newdata = Boston[val, ])
+  MSE[i] <- mean((yhat.boston-Boston$medv[val])^2)
+}
+print(mean(MSE))
+```
+:::
+
+
+## c. Now we will vary the tuning parameters of `mtry` and `ntree` to see what effect they have on performance. 
+- Use a range of reasonable `mtry` and `ntree` values.
+- Use 5 times repeated out-of-bag (OOB) to assess performance. That is, run random forest 5 times for each tuning set, calculate the OOB MSE each time and use the average for the MSE associated with the tuning parameters.
+- Use a plot to show the average MSE as a function of `mtry` and `ntree`.
+- Report the best tuning parameter combination. 
+- Note: random forest is a stochastic model; it will be different every time it runs. Set the random seed to control the uncertainty associated with the stochasticity. 
+- Hint: If you use the `randomForest` package, the `mse` element in the output is a vector of OOB MSE values for `1:ntree` trees in the forest. This means that you can set `ntree` to some maximum value and get the MSE for any number of trees up to `ntree`. 
+
+
+::: {.solution}
+
+```{r}
+#14 variables
+set.seed(2002)
+mtry_params = c(13,12,10,8,6,4,3)
+n_tree_params = c(25,125,300,500)
+MSE_actual <- vector(mode='list',length=4)
+for(k in 1:4){
+    MSE_tree <- rep(0,4)
+  for(i in (1:7)){
+    OOB_MSE = rep(0,7)
+  for(j in 1:5){
+    rf.boston <- randomForest(medv~.,data=Boston,mtry=mtry_params[i],ntree=n_tree_params[k]) 
+    OOB_MSE[j] <- rf.boston$mse[n_tree_params[k]]
+  }
+    MSE_tree[i] <- mean(OOB_MSE)
+  }
+  MSE_actual[[k]] <- MSE_tree
+}
+#for each tree size, generate 7 data points
+```
+
+```{r}
+ggplot()+
+  geom_line(aes(x=mtry_params,y=MSE_actual[[1]],color='25 Trees'))+
+  geom_line(aes(x=mtry_params,y=MSE_actual[[2]],color='125 Trees'))+
+  geom_line(aes(x=mtry_params,y=MSE_actual[[3]],color='300 Trees'))+
+  geom_line(aes(x=mtry_params,y=MSE_actual[[4]],color='500 Trees'))+
+  labs(x="Mtry Values",y="OOB MSE",title="OOB MSE for Varying Number of Trees and Mtry Values")
+```
+The best tuning parameter combination was mtry=8 and 500 trees.
+:::
+
+
+
+

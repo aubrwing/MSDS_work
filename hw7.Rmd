@@ -1,0 +1,210 @@
+---
+title: "Homework #7: SVM and Generative Classifiers" 
+author: "Aubrey Winger"
+date: "Due: Wed Oct 26 | 11:45am"
+output: R6030::homework
+---
+
+**DS 6030 | Fall 2022 | University of Virginia**
+
+------------------------------------------------------------------------
+
+```{r config, echo=FALSE}
+source(system.file("config/hw_config.R", package="R6030")) # knitr settings
+options(dplyr.summarise.inform = FALSE)  # ignore dplyr message about grouping
+```
+
+
+# Required R packages and Directories
+
+::: {.solution}
+```{r packages, message=FALSE, warning=FALSE}
+data_dir = 'https://mdporter.github.io/DS6030/data/' # data directory
+library(R6030)     # functions for DS-6030
+library(tidyverse) # functions for data manipulation   
+library(e1071)     # svm functions
+# Add other libraries here
+```
+:::
+
+
+
+# Problem 1: Handwritten Digit Recognition
+
+The MNIST database of handwritten digits (<http://yann.lecun.com/exdb/mnist/>) was an early driver of machine learning innovation. The data are greyscale values (0-255) of handwritten single digits (0-9) from a 28 x 28 image (784 dimensional vector). I did some preprocessing, include principal component analysis (PCA), and reduced dimensionality down to 30 predictors (`X1`, `X2`, ..., `X30`). There are ten possible labels $\{0, 1, \ldots, 9\}$ corresponding to each digit. 
+
+
+## a. Load the MNIST training and testing data. 
+The data are `.rds` format. Training data has 1000 samples from each class. The test data has only one sample from each class. 
+[Training Data](`r file.path(data_dir, "mnist_train.rds")`)
+[Testing Data](`r file.path(data_dir, "mnist_test.rds")`)
+
+
+::: {.solution}
+```{r}
+train_data <- readRDS("mnist_train.rds")
+test_data <- readRDS("mnist_test.rds")
+```
+:::
+
+
+
+## b. Quadratic Discriminant Analysis (QDA)
+
+Implement quadratic discriminant analysis (QDA) step-by-step (i.e., manually). Do the following:
+
+i. For each digit, estimate the mean and variance-covariance of the predictors. 
+ii. Estimate the prior class probabilities. 
+iii. Use i. and ii. to estimate $\Pr(Y = k \mid X=x)$, with the help of Bayes theorem, for $k = 0, 1, \ldots, 9$, for the ten observations in the test set. This should produce a 10 x 10 object where the rows correspond to the test observations, and the 10 columns the probability of each digit. 
+iv. Indicate how well the model predicts the test data. You choose the metric(s) for evaluation.
+
+
+::: {.solution}
+```{r}
+train_ordered = train_data[order(train_data$label),]
+y_train = train_ordered$label
+x_train = subset(train_ordered,select=-c(label))
+mean_list <- list()
+cov_list <- list()
+prior <- list()
+for(y in unique(y_train)){
+  c = x_train[y_train==y,]
+  mean_calc <- apply(c,2,mean)
+  mean_list[[toString(y)]] <- mean_calc
+  cov_list[[toString(y)]] <- cov(c)
+  prior[[toString(y)]] <- nrow(c)/nrow(x_train)
+}
+```
+```{r}
+library(matlib)
+```
+```{r}
+library(mvtnorm)
+library(caret)
+```
+
+
+```{r}
+y_test = test_data$label
+x_test = subset(test_data,select=-c(label))
+denom = rep(0,10)
+numerator = matrix(0, nrow = 10, ncol = 10)
+p=30 
+# for(i in y_test){
+#   fx = ((2*pi)**(-p/2))*((det(cov_list[[toString(i)]]))**(-1/2))*exp((-1/2)*as.matrix((x_test[i+1,]-mean_list[[toString(i)]])*solve(cov_list[[toString(i)]]))%*%t(x_test[i+1,]-mean_list[[toString(i)]]))[1,1] 
+#   #check this formula (esp prior)
+#   denom = denom + fx*prior[[toString(i)]]
+#   numerator[[toString(i)]] = fx*prior[[toString(i)]]
+# }
+for(i in 1:10){
+  for(j in 1:10){
+    guass = mvtnorm::dmvnorm(x_test[i,],mean_list[[toString(i-1)]],cov_list[[toString(j-1)]])
+    denom[i] = denom[i] + guass*prior[[toString(i-1)]]
+    numerator[i,j] = guass*prior[[toString(i-1)]]
+  }
+  numerator[i,]=numerator[i,]/denom[i]
+}
+```
+
+```{r}
+rowSums(numerator)
+```
+```{r}
+numerator #this is my 10x10 matrix
+```
+
+
+```{r}
+y_pred = rep(0,10)
+for(row in 1:10) {
+  y_pred[row] = y_test[which.max(numerator[row,])]
+}
+```
+
+```{r}
+confusionMatrix(data=factor(y_pred),reference=factor(y_test))
+```
+The model has 100% accuracy on the test data!
+:::
+
+
+# Problem 2: One-vs-Rest
+
+In KNN and the generative models (LDA/QDA, MDA, KDA, naive bayes), it is straightforward to fit a model with more than two classes. Other methods, like Logistic Regression and Support Vector Machines, are designed to deal with outcome variables that take only two values. However we can still use binary classifiers for a multi-class problems. One approach, called *one-vs-rest* is the easiest to implement (<https://en.wikipedia.org/wiki/Multiclass_classification>, and see ISL 9.4.2).
+
+For outcome variables that take K values, K models will be fit. Model 1 will be fit to discriminant class $1$ from all the other classes ($\{2,\ldots, K\}$). Model 2 will be fit to discriminate class $2$ from all the other classes ($\{1, 3, 4, \ldots, K\}$), etc. The estimated class for observation $Y_i$ is the one receiving the highest probability score (this assumes equal costs of mis-classification).
+
+Details: To fit model $k$ on the training data, code $Y=1$ if the label is $k$ and $Y=0$ if the label is not $k$ (thus comparing class $k$ vs all the rest). Then on the test data, calculate $\hat{p}_k(x_i)$, the estimated probability that $Y = 1$ according to model $k$. The estimated class label for test observation $i$ is $\arg\max_{1\leq k \leq K} \hat{p}_k(x_i)$. 
+
+We will use the MNIST digit data for this problem. 
+
+## a. Support Vector Machines (SVM) for 2-class problem
+
+To get warmed up we will fit an SVM model for a 2-class problem. In this problem, treat the digit 0 as the class of interest (`+1`) and all other digits as the negative class (`-1`).
+Fit a SVM model, using the *radial basis kernel*. 
+
+- Normally, you will need to estimate the tuning parameters for each model. But to simplify, you can use the default value of `gamma` and set `cost = 100`. 
+
+Make predictions on the 10 test observations and show the results. 
+
+- If you use the `e1071::svm()` function, set `probability = TRUE`. Then with `predict.svm(..., probability=TRUE) %>% attr("probabilities")` you can extract a probability matrix. The probabilities are estimated with [Platt scaling](https://en.wikipedia.org/wiki/Platt_scaling).
+
+- The model is intended to distinguish between 0 and everything else, so hopefully it correctly identifies which observation is 0. 
+
+::: {.solution}
+```{r}
+train_data_onevsrest <- train_data
+train_data_onevsrest$label[train_data_onevsrest$label!=0]<-1
+```
+
+```{r}
+fit = e1071::svm(factor(label)~.,
+          data=train_data_onevsrest,
+          kernel="radial",
+          cost=100,
+          probability=TRUE)
+```
+
+```{r}
+test_data_onevsrest <- test_data
+test_data_onevsrest$label[test_data_onevsrest$label!=0]<-1
+pred = predict(fit,test_data_onevsrest,probability = TRUE)%>% attr("probabilities")
+pred
+```
+```{r}
+predict(fit,test_data_onevsrest,decision_values = TRUE)
+```
+The probabilities and classifications are shown above. The model correctly identified which observation was zero, and classified all the other observations as "the rest".
+:::
+
+## b. Game time. Implement one-vs-rest for the MNIST data. 
+
+- Hint: this may take a few minutes to run. Use chunk option `cache=TRUE` on the code chunk that takes a long time to run. After you knit once (and don't change anything in the chunk), then subsequent knits will fetch the saved data and you won't have to wait.
+
+::: {.solution}
+```{r}
+fit2 = e1071::svm(factor(label)~.,
+          data=train_data,
+          kernel="radial",
+          cost=100,
+          probability=TRUE,
+          cache=TRUE)
+```
+
+```{r}
+pred = predict(fit2,test_data,probability = TRUE)%>% attr("probabilities")
+pred
+```
+
+```{r}
+predict(fit2,test_data,decision_values = TRUE)
+```
+
+
+:::
+
+
+
+
+
+

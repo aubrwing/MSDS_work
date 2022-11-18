@@ -1,0 +1,114 @@
+---
+title: "hw9"
+author: "Aubrey Winger"
+date: "11/7/2022"
+output: R6030::homework
+---
+
+```{r config, echo=FALSE}
+source(system.file("config/hw_config.R", package="R6030")) # knitr settings
+options(dplyr.summarise.inform = FALSE)  # ignore dplyr message about grouping
+```
+
+```{r packages, message=FALSE, warning=FALSE}
+data.dir = 'https://mdporter.github.io/DS6030/data/' # data directory
+library(R6030)     # functions for DS-6030
+library(tidyverse) # functions for data manipulation  
+```
+
+```{r}
+train <- read_csv('train.csv')
+test <- read_csv('test.csv')
+```
+First, I encoded all the categorical variables and imputed the numerical variables that had NA values. 
+```{r}
+train_original=train
+train$Remodeled <- !is.na(train$YearRemodAdd)
+train$House_age <- 2022 - train$YearBuilt
+train$Garage_age <- 2022 - train$GarageYrBlt
+for(column in colnames(train)){
+  if(is.numeric(train[[column]])==FALSE){
+    train[[column]] = as.numeric(factor(train[[column]],exclude=NA))
+    train[[column]] = mean(train[[column]],na.rm=TRUE)
+  }
+  else{
+    train[[column]][is.na(train[[column]])] = mean(train[[column]],na.rm=TRUE)
+  }
+}
+#train$MSZoning = as.numeric(factor(train$MSZoning,levels=c("A","C","FV","I","RH","RL","RP","RM")),exclude=NA)
+#train$LotFrontage[is.na(train$LotFrontage)] = mean(train$LotFrontage,na.rm=TRUE)
+```
+
+I decided to drop the features Street, Alley, Utilities, RoofMatl, Heating, 3SsnPorch, PoolArea, PoolQC, Fence, MiscFeature, MiscValue, MoSold, YrSold, SaleType. I feature engineered YearRemodAdd to be Remodeled, which simply tells us if a dwelling has been remodeled or not. I feature engineered YearBuilt and GarageYrBlt to House_age and Garage_age, which tells the homes/garages current age (based on 2022). Because of this, I dropped YearRemodAdd, YearBuilt, and GarageYrBlt
+```{r}
+train_cleaned = subset(train, select=-c(Street, Alley, Utilities, RoofMatl, Heating, PoolArea, PoolQC, Fence, MiscFeature, MiscVal, MoSold, YrSold, SaleType, YearRemodAdd, YearBuilt, GarageYrBlt))
+```
+
+```{r}
+drop <- c("3SsnPorch")
+train_cleaned = train_cleaned[,!(names(train_cleaned) %in% drop)]
+```
+
+```{r}
+test_original=test
+test$Remodeled <- !is.na(test$YearRemodAdd)
+test$House_age <- 2022 - test$YearBuilt
+test$Garage_age <- 2022 - test$GarageYrBlt
+for(column in colnames(test)){
+  if(is.numeric(test[[column]])==FALSE){
+    test[[column]] = as.numeric(factor(test[[column]],exclude=NA))
+    test[[column]] = mean(test[[column]],na.rm=TRUE)
+  }
+  else{
+    test[[column]][is.na(test[[column]])] = mean(test[[column]],na.rm=TRUE)
+  }
+}
+test_cleaned = subset(test, select=-c(Street, Alley, Utilities, RoofMatl, Heating, PoolArea, PoolQC, Fence, MiscFeature, MiscVal, MoSold, YrSold, SaleType, YearRemodAdd, YearBuilt, GarageYrBlt))
+drop <- c("3SsnPorch")
+test_cleaned = test_cleaned[,!(names(test_cleaned) %in% drop)]
+```
+
+
+```{r}
+library(xgboost)
+```
+```{r}
+features <- colnames(train_cleaned)
+matrix_train <- data.matrix(train_cleaned)
+matrix_test <- data.matrix(test_cleaned)
+dim(subset(matrix_train, select=-c(SalePrice)))
+```
+
+```{r}
+dim(subset(matrix_test, select=-c(SalePrice)))
+```
+
+
+
+```{r}
+set.seed(111)
+m1_xgb <-
+  xgboost(
+    data = subset(matrix_train, select=-c(SalePrice)),
+    label = data.matrix(train_cleaned$SalePrice),
+    nrounds = 1000,
+    objective = "reg:squarederror",
+    early_stopping_rounds = 3,
+    max_depth = 6,
+    eta = .25
+  )   
+```
+
+
+```{r}
+pred <- predict(m1_xgb, matrix_test)
+predFinal <- data.frame(test$Id,pred)
+```
+
+```{r}
+colnames(predFinal)<-c("Id","SalePrice")
+final <- write.csv(predFinal,"winger_aubrey_hw9.csv",row.names = FALSE,quote=FALSE)
+```
+
+
+
